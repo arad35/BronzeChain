@@ -2,10 +2,10 @@ from blockchain import *
 import os
 
 # addresses of all peers in network
-PEERS = [("192.168.1.102", 50001), ("192.168.1.102", 50010)]
-CONNECT_PORT = 50020
+PEERS = [("192.168.1.102", 51001), ("192.168.1.102", 51010)]
+CONNECT_PORT = 51020
 TIMEOUT = 15
-HOP_MAX = 3
+HOP_MAX = 4
 
 
 def start_bronzechain(name, balance=50, miner=False):
@@ -13,24 +13,37 @@ def start_bronzechain(name, balance=50, miner=False):
     return: the peer created"""
 
     # create peer and activate it
-    my_peer = Peer(name, PEERS, CONNECT_PORT, balance=balance, miner=miner, time_out=TIMEOUT, hop_max=HOP_MAX)
-    my_peer.main_loop()
-    my_peer.send_hello(send_me_hello=True)
+    my_peer = Peer(name, PEERS, CONNECT_PORT, balance=balance, miner=miner, hop_max=HOP_MAX)
+    my_peer.start()
     return my_peer
 
+def print_transactions(peer):
+    while True:
+        time.sleep(15)
+        print("\n" * 3)
+        print("verified transactions:")
+        for transaction in peer.verified_transactions:
+            print(transaction.to_json())
+        print("\n" * 3)
 
 def main():
     # Create a Peer instance
     my_name = input("your name: ")
     my_peer = start_bronzechain(my_name)
 
+    watch_thread = threading.Thread(target=print_transactions, args=(my_peer, ))
+    watch_thread.daemon = True
+    watch_thread.start()
+
     while True:
-        # Get user input
+        # Get user
         name = input("Enter the name of the receiver: ")
         # receivers public key
+        pass
         receiver = my_peer.fetch_public_key(name)
+
         if not receiver:
-            print("Name not found in the peer database. Try again.")
+            print(f"Name {name} not found in the peer database. Try again.")
             continue
 
         try:
