@@ -14,259 +14,21 @@ import json
 from typing import List
 import traceback
 import time
-# from json_print import pretty_print_json
-
-
-def sha256(message):
-    """hashes a message
-    returns hash as a string"""
-    return hashlib.sha256(message.encode('utf-8')).hexdigest()
-
-
-def print_long_string(s, max_length=100):
-    """Split a long string into lines no longer than max_length."""
-    lines = []
-    while len(s) > max_length:
-        # Find the last space within the max_length
-        split_index = s.rfind(' ', 0, max_length)
-        if split_index == -1:
-            # If there's no space within the max_length, split at max_length
-            split_index = max_length
-        # Append the line to the list
-        lines.append(s[:split_index])
-        # Update the string to exclude the processed part
-        s = s[split_index:].lstrip()
-    # Append the last part of the string (or the whole string if short enough)
-    if s:
-        lines.append(s)
-
-    for line in lines:
-        print(line)
+from BronzeChain_classes import *
 
 
 class PacketHandlingError(Exception):
     pass
 
 
-class Transaction:
-    """A class for representing a transaction"""
-
-    def __init__(self, sender: RSA.RsaKey, receiver: RSA.RsaKey, value: float,
-                 timestamp: datetime, tx_hash: str, signature: str):
-        """transaction initialization by directly assigning properties"""
-        # sender and receiver public keys
-        self.sender = sender
-        self.receiver = receiver
-
-        self.value = value
-        self.timestamp = timestamp
-        self.tx_hash = tx_hash
-        self.signature = signature
-
-    def to_json(self):
-        """return json representation of the transaction"""
-        return json.dumps({
-            "sender": binascii.hexlify(self.sender.export_key()).decode(),
-            "receiver": binascii.hexlify(self.receiver.export_key()).decode(),
-            "value": self.value,
-            "timestamp": self.timestamp.isoformat(),
-            "tx_hash": self.tx_hash,
-            "signature": self.signature
-        })
-
-    @classmethod
-    def from_json(cls, json_data):
-        """creates and returns a transaction object from json data"""
-        try:
-            # load data
-            data = json.loads(json_data)
-            sender = RSA.import_key(binascii.unhexlify(data["sender"]))
-            receiver = RSA.import_key(binascii.unhexlify(data["receiver"]))
-            value = data["value"]
-            timestamp = datetime.fromisoformat(data["timestamp"])
-            tx_hash, signature = data["tx_hash"], data["signature"]
-
-        except Exception as e:
-            # possible errors: data doesn't fit transaction format / missing properties
-            # / data doesn't fit type (e.g. RSAkey)
-            print(f"\ndata was not a valid transaction\n{e}", json_data)
-            return f"data was not a valid transaction\n{e}"
-
-        else:
-            return cls(sender, receiver, value, timestamp, tx_hash, signature)
-
-    @classmethod
-    def create_transaction(cls, sender, receiver, value, signer):
-        """creates a new transaction
-        sender: sender's private key
-        receiver: receiver's private key
-        value: amount to be transferred
-        signer: peer's signer object
-        returns: new transaction"""
-        timestamp = datetime.now()
-        data = f"{binascii.hexlify(sender.export_key()).decode()}{binascii.hexlify(receiver.export_key()).decode()}{value}{timestamp.isoformat()}"
-        print(f"og data:\n{data}")
-        tx_hash = sha256(data)
-        signature = cls.sign(data, signer)
-        return cls(sender, receiver, value, timestamp, tx_hash, signature)
-
-    @staticmethod
-    def sign(data, signer):
-        """sign the transaction using the user's private key
-        data: transaction data
-        signer: peer's signer object
-        return: signature in string format"""
-        h = SHA256.new(data.encode('utf-8'))
-        return binascii.hexlify(signer.sign(h)).decode('ASCII')
-
-
-class Block:
-    """A class for representing a single block"""
-
-    def __init__(self, transactions: List[Transaction], transactions_hash: str,
-                 difficulty: int, reward: float, previous_hash: str,
-                 nonce: int = None, miner: RSA.RsaKey = None, timestamp: datetime = None):
-        """block initialization by directly assigning properties
-        nonce, miner and timestamp are None in case block was not yet mined"""
-
-        self.transactions = copy.copy(transactions)
-        self.transaction_hash = transactions_hash
-        self.difficulty = difficulty
-        self.reward = reward
-        self.previous_hash = previous_hash
-        self.nonce = nonce
-        self.miner = miner
-        self.timestamp = timestamp
-
-    def to_json(self):
-        """return json representation of the block"""
-        return json.dumps({
-            "transactions": [tx.to_json() for tx in self.transactions],
-            "transaction_hash": self.transaction_hash,
-            "difficulty": self.difficulty,
-            "reward": self.reward,
-            "previous_hash": self.previous_hash,
-            "nonce": self.nonce,
-            "miner": binascii.hexlify(self.miner.export_key()).decode(),
-            "timestamp": self.timestamp.isoformat()
-        })
-
-    @classmethod
-    def from_json(cls, json_data):
-        """create and return Block object from json data"""
-        data = json.loads(json_data)
-        transactions = [Transaction.from_json(tx) for tx in data["transactions"]]
-        transaction_hash = data["transaction_hash"]
-        difficulty = data["difficulty"]
-        reward = data["reward"]
-        previous_hash = data["previous_hash"]
-        nonce = data["nonce"]
-        miner = RSA.import_key(binascii.unhexlify(data["miner"]))
-        timestamp = datetime.fromisoformat(data["timestamp"])
-        return cls(transactions, transaction_hash, difficulty, reward, previous_hash, nonce, miner, timestamp)
-
-    @classmethod
-    def create_block(cls, transactions, difficulty, reward, previous_hash):
-        """creates and returns a new block"""
-        transaction_hash = cls.compute_transaction_hash(transactions)
-        return cls(transactions, transaction_hash, difficulty, reward, previous_hash)
-
-    @classmethod
-    def create_genesis_block(cls):
-        """Create and returns genesis block of the blockchain"""
-        transactions = []
-        transactions_hash = "0"
-        difficulty = 1
-        reward = 0
-        previous_hash = "0"
-        timestamp = datetime.now()
-        return cls(transactions, transactions_hash, difficulty, reward, previous_hash, timestamp=timestamp)
-
-    @staticmethod
-    def compute_transaction_hash(transactions):
-        """computes and returns hash of all transactions"""
-        concatenated_hash = ''.join([tx.tx_hash for tx in transactions])
-        return sha256(concatenated_hash)
-
-    def compute_hash(self):
-        """computes and returns the hash of the block"""
-        block_data = f"{self.transaction_hash}{self.difficulty}{self.reward}{self.previous_hash}{self.nonce}{self.timestamp}"
-        return sha256(block_data)
-
-    def validate_difficulty(self):
-        """checks if hash of block suits difficulty
-        returns: a boolean indicating whether hash suits difficulty"""
-        block_hash = self.compute_hash()
-        if block_hash.endswith("0" * self.difficulty):
-            return True
-        else:
-            return False
-
-    def mine_block(self, miner):
-        """Implements proof of work: finds a suitable nonce that satisfies difficulty
-        miner: public key of miner
-        updates: nonce, miner and timestamp properties"""
-        self.nonce = 0
-        self.timestamp = datetime.now()
-        success = self.validate_difficulty()
-
-        while not success:
-            self.nonce += 1
-            success = self.validate_difficulty()
-
-        self.miner = miner
-        self.timestamp = datetime.now()
-
-
-class Blockchain:
-    """Represents the entire blockchain"""
-
-    def __init__(self):
-        """Initialize blockchain with the genesis block"""
-        self.chain = [Block.create_genesis_block()]
-
-    def add_block_to_chain(self, block):
-        """Add a block to the blockchain if valid"""
-        self.chain.append(block)
-
-    def get_last_block(self):
-        """Get the last block in the blockchain"""
-        return self.chain[-1]
-
-    def is_chain_valid(self):
-        """Check the integrity of the blockchain"""
-        for i in range(1, len(self.chain)):
-            current_block = self.chain[i]
-            previous_block = self.chain[i - 1]
-
-            if current_block.previous_hash != previous_block.compute_hash():
-                return False
-
-            if not current_block.validate_difficulty():
-                return False
-
-        return True
-
-    def verify_block(self, block):
-        """Comprehensive validation of a block before adding to the chain"""
-        last_block = self.get_last_block()
-
-        if block.previous_hash != last_block.compute_hash():
-            return False
-
-        if not block.validate_difficulty():
-            return False
-
-        return True
-
-
 class Peer:
     """Represents a peer in the blockchain network"""
 
-    def __init__(self, name, peers, connect_port, balance=50, miner=False, hop_max=3, refresh_time=120):
+    def __init__(self, name, peers, connect_port, balance=50, miner=False, hop_max=3, time_to_live=240,
+                 min_transactions=3, max_transactions=5, difficulty=2, reward=5):
         # initialize networking properties
-        self.ip = gethostbyname(gethostname())
-        self.packet_cache = set() # stores hashes of last packets
+        self.ip = "localhost"
+        self.packet_cache = dict() # packet hash: time added
 
         # properties for sending
         self.send_sock = socket(AF_INET, SOCK_STREAM)
@@ -278,7 +40,7 @@ class Peer:
 
         # net constants
         self.hop_max = hop_max
-        self.refresh_time = refresh_time
+        self.time_to_live = time_to_live
 
         # identifying properties
         self.name = name
@@ -287,10 +49,9 @@ class Peer:
         self.public_key = self._private_key.public_key()
 
         # blockchain properties
-        self.verified_transactions = []
-        self.blockchain = Blockchain()
+        self.blockchain = Blockchain(min_transactions, max_transactions, difficulty, reward)
         self.miner = miner  # flag indicating whether peer is a miner
-        self.peer_database = dict()  # address, name, public key, miner status
+        self.peer_database = dict()  # address, name, public key
 
     @property
     def identity(self):
@@ -302,9 +63,19 @@ class Peer:
         """returns signer object of the peer"""
         return PKCS1_v1_5.new(self._private_key)
 
+    @property
+    def verified_transactions(self):
+        """returns list of verified transactions"""
+        return self.blockchain.verified_transactions
+
+    @verified_transactions.setter
+    def verified_transactions(self, value):
+        """set verified transactions list"""
+        self.blockchain.verified_transactions = value
+
     def update_peer(self, address, name, public_key):
         """update peer info in database"""
-        self.peer_database[address] = [name, public_key]
+        self.peer_database[address] = [name, binascii.hexlify(public_key.export_key()).decode()]
         print(f"\nupdated peer {address} in database", self.peer_database[address])
 
     def fetch_public_key(self, peer_name):
@@ -312,9 +83,18 @@ class Peer:
         returns public key if found, false if not found"""
         for name, public_key in self.peer_database.values():
             if peer_name == name:
-                return public_key
+                return RSA.import_key(binascii.unhexlify(public_key))
 
         # name not found in database
+        return False
+
+    def fetch_name(self, public_key_str):
+        """fetch name by string rep of public key
+        returns name if found, false if not found"""
+        for name, key in self.peer_database.values():
+            if key == public_key_str:
+                return name
+
         return False
 
     def compute_packet_hash(self, data):
@@ -326,7 +106,7 @@ class Peer:
             # return hash of the error message contents + timestamp
             message = dict_data["message"]
             # replace original packet data in its hash
-            data_hash = self.compute_packet_hash(dict_data["data"])
+            data_hash = self.compute_packet_hash(json.dumps(dict_data["data"]))
             timestamp = dict_data["timestamp"]
 
             data = f"{message}{data_hash}{timestamp}"
@@ -354,7 +134,8 @@ class Peer:
         """add a packet to cache
         data: packet in json format"""
         packet_hash = self.compute_packet_hash(data)
-        self.packet_cache.add(packet_hash)
+        # add packet hash, time of addition
+        self.packet_cache[packet_hash] = time.time()
         print(f"\nadded packet to cache. data:\n{data}\nhash:{packet_hash}")
 
     def is_packet_in_cache(self, data):
@@ -373,7 +154,7 @@ class Peer:
         value: amount to be sent
         returns new transaction"""
         new_transaction = Transaction.create_transaction(self.public_key, receiver, value, self.signer)
-        print("\nnew transaction created:\n", new_transaction.to_json())
+        print("\nnew transaction created:\n", new_transaction)
         return new_transaction
 
     @staticmethod
@@ -401,7 +182,7 @@ class Peer:
     def add_transaction(self, transaction):
         """adds transaction to verified transactions"""
         self.verified_transactions.append(transaction)
-        print("\nnew transaction added:\n", transaction.to_json())
+        print("\nnew transaction added to verified transactions:\n", transaction)
 
     def send_data(self, json_data, new_data=False, data_type=None):
         """sends data to all peers in network
@@ -423,10 +204,10 @@ class Peer:
             self.add_packet_to_cache(json.dumps(dict_data))
 
         else:
-            if dict_data["hop_count"] == 0:
-                print(f'\nmax hop count reached for {data_type}:\n', json.dumps(dict_data))
-
             data_type = dict_data["type"]
+
+            if dict_data["hop_count"] == 0:
+                print(f'\nmax hop count reached for {data_type}:\n', json_data)
             # decrease hop count
             dict_data["hop_count"] = dict_data["hop_count"] - 1
 
@@ -446,7 +227,6 @@ class Peer:
             except OSError as e:
                 if e.winerror in {10022, 10038}:
                     print(f"\nSpecific WinError occurred while sending {data_type} to {addr}: {e.winerror}\n{e}")
-                    traceback.print_exc()
                 if e.winerror == 10061:
                     print(f"\n{addr} is unavailable")
 
@@ -502,8 +282,10 @@ class Peer:
             peer_thread = threading.Thread(target= self.receive_from_peer, args=(receive_sock,))
             peer_thread.daemon = True
             peer_thread.start()
+            time.sleep(2)
 
-    def recv_all(self, sock):
+    @staticmethod
+    def recv_all(sock):
         """receive all the data from a socket
         returns a string containing all data"""
         data = b""
@@ -521,6 +303,7 @@ class Peer:
     def receive_from_peer(self, sock: SocketType):
         """thread for receiving data from another peer"""
 
+        result = False
         try:
             # receive data
             try:
@@ -530,13 +313,15 @@ class Peer:
                 print(f"\nsocket error while receiving data from {sock.getpeername()}\n{e}")
                 raise PacketHandlingError
 
+            if json_data == "":
+                print(f"\nempty data from {sock.getpeername()}")
+                raise PacketHandlingError
             # load data
             try:
                 data = json.loads(json_data)
 
             except Exception as e:
-                self.notify_error(sock, f"data wasn't a valid json\n{e}", json_data)
-                raise PacketHandlingError
+                raise PacketHandlingError(sock, f"data wasn't a valid json\n{e}", json_data)
 
             # check if packet is already in cache
             if self.is_packet_in_cache(json_data):
@@ -545,94 +330,106 @@ class Peer:
 
             # check hop count
             if data["hop_count"] < 0:
-                self.notify_error(sock, "hop count exceeded", json_data)
-                raise PacketHandlingError
+                raise PacketHandlingError(sock, "hop count exceeded", json_data)
 
             try:
                 # process message
                 # return without propagating packet if processing was unsuccessful
                 if data["type"] == "Transaction":
                     # process transaction
-                    # success value - processing completed successfully
-                    success = self.handle_transaction(sock, json_data)
-                    if not success: raise PacketHandlingError
+                    # result - True if processed successfully, error message else
+                    result = self.handle_transaction(json_data)
+                    if isinstance(result, str):
+                        raise PacketHandlingError(sock, result, json_data)
 
                 elif data["type"] == "Block":
                     # process block
-                    # success value - processing completed successfully
-                    success = self.handle_block(sock, json_data)
-                    if not success: raise PacketHandlingError
+                    # result - True if processed successfully, error message else
+                    result = self.handle_block(json_data)
+                    if isinstance(result, str):
+                        raise PacketHandlingError(sock, result, json_data)
 
                 elif data["type"] == "Hello":
                     # process hello message
-                    # success value - processing completed successfully
-                    success = self.handle_hello(sock, json_data)
-                    if not success: raise PacketHandlingError
+                    # result - True if processed successfully, error message else
+                    result = self.handle_hello(json_data)
+                    if isinstance(result, str):
+                        raise PacketHandlingError(sock, result, json_data)
 
                 elif data["type"] == "Message":
-                    # print error message
-                    self.print_message(sock, json_data)
+                    # no need for special processing
+                    pass
 
                 else:
-                    self.notify_error(sock, "json data of unfamiliar type", json_data)
-                    raise PacketHandlingError
+                    raise PacketHandlingError(sock, "json data of unfamiliar type", json_data)
 
             except KeyError as e:
-                self.notify_error(sock, f"data was not a valid BronzeChain message\n{e}", data)
-                raise PacketHandlingError
+                raise PacketHandlingError(sock, f"data was not a valid BronzeChain message\n{e}", data)
 
-        except PacketHandlingError:
+        except PacketHandlingError as e:
             # unsuccessful processing
-            pass
+            if len(e.args) == 3:
+                # notify error if needed
+                self.notify_error(*e.args)
 
         else:
-            self.add_packet_to_cache(json_data)
-            # after data processing successfully, propagate data in network
-            self.send_data(json_data)
+            if result is True:
+                # successful processing
+                self.add_packet_to_cache(json_data)
+                # propagate packet
+                self.send_data(json_data)
 
         finally:
             sock.close()
 
-    def handle_transaction(self, sock, transaction_json):
+    def handle_transaction(self, transaction_json):
         """handles a received transaction
-        sock: socket for interaction with sender
         transaction_json: json data with the transaction
-        returns: True if transaction processed successfully, False otherwise"""
-        transaction = Transaction.from_json(transaction_json)
+        returns: True if transaction processed successfully, error message otherwise"""
+        # load transaction
+        try:
+            transaction = Transaction.from_json(transaction_json)
+        except Exception as e:
+            return f"data was not a valid transaction\n{e}"
 
-        # error in parsing json
-        if isinstance(transaction, str):
-            error_message = transaction
-            self.notify_error(sock, error_message, transaction_json)
-            return False
-
-        # invalid transaction (wrong hash or signature)
         verification = self.verify_transaction(transaction)
         if isinstance(verification, str):
-            error_message = verification
-            self.notify_error(sock, error_message, transaction_json)
-            return False
+            # invalid transaction (wrong hash or signature)
+            return verification
 
-        # valid transaction,send and add to verified transactions
-        self.add_transaction(transaction)
-        return True
+        elif verification is True:
+            # valid transaction, add to verified transactions
+            self.add_transaction(transaction)
 
-    def handle_block(self, sock, block_json):
-        """Handle the receipt of a new block from another peer"""
-        block = Block.from_json(block_json)
-
-        if self.blockchain.verify_block(block):
-            self.blockchain.add_block_to_chain(block)
-            print("Block added to the blockchain")
             return True
-        else:
-            print("Received block is invalid")
-            return False
 
-    def handle_hello(self, sock, hello_packet):
+    def handle_block(self, block_json):
+        """handles a received block
+        block_json: json data with the transaction
+        returns: True if transaction processed successfully, error message otherwise"""
+        # load block
+        blockchain = self.blockchain
+        try:
+            block = Block.from_json(block_json)
+        except Exception as e:
+            return f"data was not a valid block\n{e}"
+
+        verification = blockchain.verify_block(block, Peer.verify_transaction)
+        if isinstance(verification, str):
+            # invalid block
+            return verification
+
+        elif verification is True:
+            # valid block, add to chain and execute the block
+            blockchain.add_block_to_chain(block)
+            self.execute_last_block()
+
+            return True
+
+    def handle_hello(self, hello_packet):
         """handles an hello packet
-        sock: socket for interaction with sender
-        transaction_json: json data with the transaction"""
+        transaction_json: json data with the transaction
+        returns: True if hello packet processed successfully, error message otherwise"""
         try:
             # load data
             data = json.loads(hello_packet)
@@ -643,72 +440,96 @@ class Peer:
         except Exception as e:
             # possible errors: data doesn't fit hello packet format / missing properties
             # / data doesn't fit type (e.g. RSAkey)
-            self.notify_error(sock, f"data was not a valid hello packet\n{e}", hello_packet)
-            traceback.print_exc()
-            return False
+            return f"data was not a valid hello packet\n{e}"
+
+        # update peer database
+        self.update_peer(address, name, public_key)
+        # send back hello if requested
+        if data["send_me_hello"]:
+            self.send_hello(send_me_hello=False)
+
+        return True
+
+    def execute_last_block(self):
+        """execute the transactions in last block of the chain"""
+        block = self.blockchain.get_last_block()
+
+        # hashes of transactions in block
+        block_transaction_hashes = list(map(lambda transaction: transaction.tx_hash, block.transactions))
+
+        # filter verified transactions that are not in the block
+        filtered_transactions = filter(lambda transaction: transaction.tx_hash not in block_transaction_hashes,
+                                       self.verified_transactions)
+        # update verified transactions
+        self.verified_transactions = list(filtered_transactions)
+
+        # filter transactions in which the peer is the receiver
+        receiver_transactions = filter(lambda transaction: transaction.receiver == self.public_key,
+                                     block.transactions)
+        # add received amount from balance
+        for transaction in receiver_transactions:
+            self.balance += transaction.value
+
+        # filter transactions in which the peer is the sender
+        sender_transactions = filter(lambda transaction: transaction.sender == self.public_key,
+                                     block.transactions)
+        # remove sent amount from balance
+        for transaction in sender_transactions:
+            self.balance -= transaction.value
+
+        # acquire reward if peer is the miner
+        if block.miner == self.public_key:
+            self.balance += block.reward
+
+    def new_block(self):
+        """if there are enough transactions,
+        Create, mine, and send a new block"""
+        blockchain = self.blockchain
+        # if there aren't enough transactions, return
+        if not blockchain.can_create_block():
+            print(f"{len(self.verified_transactions)} is not enough transactions for mining")
+            return
+        block = blockchain.create_new_block()
+        blockchain.mine_block(block, self.public_key)
+
+        verification = blockchain.verify_block(block, Peer.verify_transaction)
+        if verification is True:
+            print("Block verified successfully")
+            self.send_block(block)
+            blockchain.add_block_to_chain(block)
+            self.execute_last_block()
+            print("Block sent, added to chain and executed")
 
         else:
-            # update peer database
-            print(f"\nreceived hello from {sock.getpeername()}:\n", hello_packet)
-            self.update_peer(address, name, public_key)
-
-            # send back hello if requested
-            pass
-            if data["send_me_hello"]:
-                self.send_hello(send_me_hello=False)
-
-            return True
-
-    def print_message(self, sock, json_data):
-        """print an error message"""
-        try:
-            data = json.loads(json_data)
-            message = data["message"]
-            og_data = data["data"]
-
-        except Exception as e:
-            # possible errors: data doesn't fit message packet format / missing properties
-            print(f"\nerror from {sock.getpeername()}:data was not a valid error message\n{e}\n{json_data}")
-
-        else:
-            # print the received error message
-            print(f"\nerror from {sock.getpeername()}:\n{message}\n{og_data}")
-
-    def mine_new_block(self):
-        """Create, mine, and send a new block"""
-        last_block = self.blockchain.get_last_block()
-        previous_hash = last_block.compute_hash()
-        difficulty = last_block.difficulty  # change to self difficulty
-        reward = 50  # change to self reward
-
-        new_block = Block.create_block(
-            self.verified_transactions, difficulty, reward, previous_hash
-        )
-
-        new_block.mine_block(self.public_key)
-
-        if self.blockchain.verify_block(new_block):
-            self.blockchain.add_block_to_chain(new_block)
-            self.verified_transactions = []
-            self.send_block(new_block)
-        else:
-            print("Mined block is invalid. Retrying...")
-            # return failure indication
+            print(f"Block verification failed: {verification}")
+            print(f"Block details: {block}")
 
     def miner_thread(self):
         """Constantly check for new transactions and mine new blocks"""
         while self.miner:
-            if len(self.verified_transactions) >= 2:
-                self.mine_new_block()
-            time.sleep(5)
+            self.new_block()
+            time.sleep(10)
 
-    def cleanup_thread(self):
-        """clear packet cache once in refresh time"""
+    def cleanup(self):
+        """clear expired packets"""
 
         while True:
-            time.sleep(self.refresh_time)
-            self.packet_cache.clear()
-            print(f"""packet cache cleanup at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}""")
+            now_time = time.time()
+            try:
+                expired_packets = list(filter(lambda packet_hash:
+                                              now_time - self.packet_cache[packet_hash] >= self.time_to_live,
+                                              self.packet_cache.keys()))
+
+                for packet in expired_packets:
+                    add_time = self.packet_cache.pop(packet)
+                    print(f"removed packet: {packet} at {now_time - add_time} seconds")
+
+            except RuntimeError as e:
+                print(f"error when going through packet cache: {e}")
+                traceback.print_exc()
+                continue
+
+            time.sleep(10)
 
     def start(self):
         """start BronzeChain"""
@@ -717,7 +538,7 @@ class Peer:
         receive_thread = threading.Thread(target=self.receive_data)
         receive_thread.start()
 
-        cleanup_thread = threading.Thread(target= self.cleanup_thread)
+        cleanup_thread = threading.Thread(target= self.cleanup)
         cleanup_thread.daemon = True
         cleanup_thread.start()
 
@@ -726,4 +547,3 @@ class Peer:
             miner_thread.start()
 
 
-# gui
