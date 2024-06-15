@@ -1,2 +1,2 @@
 # BronzeChain
-Decentralized and Secure digital wallet
+Decentralized and secure digital wallet
