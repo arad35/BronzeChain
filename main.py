@@ -1,11 +1,12 @@
 from blockchain import *
-import os
+import re
 
 # addresses of all peers in network
-PEERS = [("192.168.1.102", 51010), ("192.168.1.102", 51020)]
-CONNECT_PORT = 51001
+PEERS = [("localhost", 60010), ("localhost", 60020)]
+CONNECT_PORT = 60001
 TIMEOUT = 15
 HOP_MAX = 4
+my_peer = None
 
 
 def start_bronzechain(name, balance=50, miner=False):
@@ -28,43 +29,92 @@ def print_transactions(peer):
         print("\n" * 3)
 
 
+def replace_keys_with_names(data, peer: Peer):
+    """use regex logic to replace public keys of peers with name"""
+    pattern = re.compile(r'(sender|receiver|miner): (\w+)')
+
+    def replace(match):
+        if match.group(2) == peer.identity:
+            # public key of the user, replace with username
+            return f"{match.group(1)} : {peer.name}"
+
+        name = peer.fetch_name(match.group(2))
+        if name: return f"{match.group(1)} : {name}" # found a name corresponding to key
+
+        # return original string
+        return match.group()
+
+    return pattern.sub(replace, data)
+
+
 def main():
     # Create a Peer instance
     my_name = input("your name: ")
     my_peer = start_bronzechain(my_name)
 
-    watch_thread = threading.Thread(target=print_transactions, args=(my_peer, ))
-    watch_thread.daemon = True
-    watch_thread.start()
+    # watch_thread = threading.Thread(target=print_transactions, args=(my_peer, ))
+    # watch_thread.daemon = True
+    # watch_thread.start()
+
     while True:
-        # Get user input
-        name = input("Enter the name of the receiver: ")
-        # receivers public key
-        pass
-        receiver = my_peer.fetch_public_key(name)
-        if not receiver:
-            print("Name not found in the peer database. Try again.")
-            continue
+        command = input("show or send: ")
 
-        try:
-            value = float(input("Enter the value of the transaction: "))
-        except ValueError:
-            print("Invalid value. Please enter a numeric value.")
-            continue
+        if command.lower() == "send":
+            # Get user input
+            name = input("Enter the name of the receiver: ")
+            # receivers public key
+            pass
+            receiver = my_peer.fetch_public_key(name)
+            if not receiver:
+                print("Name not found in the peer database. Try again.")
+                continue
 
-        # Create the transaction
-        transaction = my_peer.create_transaction(receiver, value)
+            try:
+                value = float(input("Enter the value of the transaction: "))
+            except ValueError:
+                print("Invalid value. Please enter a numeric value.")
+                continue
 
-        # Verify the transaction
-        verification = my_peer.verify_transaction(transaction)
-        if verification is True:
-            print("Transaction verified successfully.")
-            my_peer.send_transaction(transaction)
-            my_peer.add_transaction(transaction)
-            print("Transaction sent and added to verified transactions.")
+            if value > my_peer.balance:
+                print(f"{value} is more than your balance ({my_peer.balance})")
+                continue
+
+            # Create the transaction
+            transaction = my_peer.create_transaction(receiver, value)
+
+            # Verify the transaction
+            verification = my_peer.verify_transaction(transaction)
+            if verification is True:  # check if the verification is the boolean True (and not some string)
+                print("Transaction verified successfully.")
+                my_peer.send_transaction(transaction)
+                my_peer.add_transaction(transaction)
+                print("Transaction sent and added to verified transactions.")
+            else:
+                print(f"Transaction verification failed: {verification}")
+                print(f"Transaction details: {transaction.to_json()}")
+
+        elif command.lower() == "show":
+            property_name = input("Enter a property to show: ")
+
+            try:
+                data = getattr(my_peer, property_name)
+            except AttributeError:
+                print(f"Property '{property_name}' does not exist.")
+                continue
+
+            if isinstance(data, list):
+                string_data = '[\n' + ",\n".join(str(tx) for tx in data) + '\n]'
+            else:
+                string_data = str(data)
+
+            sub_string_data = replace_keys_with_names(string_data, my_peer)
+
+            print(f"{property_name}:")
+            print(sub_string_data)
+
         else:
-            print(f"Transaction verification failed: {verification}")
-            print(f"Transaction details: {transaction.to_json()}")
+            print(f"no such command: {command}")
+
 
 if __name__ == "__main__":
     main()
