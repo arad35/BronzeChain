@@ -99,22 +99,6 @@ class Transaction:
         return self.__repr__()
 
 
-class RewardTransaction(Transaction):
-    """special transaction for rewarding a miner"""
-
-    def __init__(self, sender: RSA.RsaKey, receiver: RSA.RsaKey, value: float,
-                 timestamp: datetime, tx_hash: str, signature: str):
-        """transaction initialization by directly assigning properties"""
-        # sender and receiver public keys
-        self.sender = sender
-        self.receiver = receiver
-
-        self.value = value
-        self.timestamp = timestamp
-        self.tx_hash = tx_hash
-        self.signature = signature
-
-
 class Block:
     """A class for representing a single block"""
 
