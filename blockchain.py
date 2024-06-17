@@ -279,7 +279,7 @@ class Peer:
         while True:
             receive_sock, _ = sock.accept()
 
-            peer_thread = threading.Thread(target= self.receive_from_peer, args=(receive_sock,))
+            peer_thread = threading.Thread(target=self.receive_from_peer, args=(receive_sock,))
             peer_thread.daemon = True
             peer_thread.start()
             time.sleep(2)
@@ -308,6 +308,7 @@ class Peer:
             # receive data
             try:
                 json_data = self.recv_all(sock).decode()
+                print(f"received from {sock.getpeername()}:\n{json_data}")
             # socket error (imported socket as *)
             except error or OSError as e:
                 print(f"\nsocket error while receiving data from {sock.getpeername()}\n{e}")
@@ -465,7 +466,7 @@ class Peer:
 
         # filter transactions in which the peer is the receiver
         receiver_transactions = filter(lambda transaction: transaction.receiver == self.public_key,
-                                     block.transactions)
+                                       block.transactions)
         # add received amount from balance
         for transaction in receiver_transactions:
             self.balance += transaction.value
@@ -505,9 +506,10 @@ class Peer:
             print(f"Block details: {block}")
 
     def miner_thread(self):
-        """Constantly check for new transactions and mine new blocks"""
-        while self.miner:
-            self.new_block()
+        """Mine if peer is a miner"""
+        while True:
+            if self.miner:
+                self.new_block()
             time.sleep(10)
 
     def cleanup(self):
@@ -531,19 +533,29 @@ class Peer:
 
             time.sleep(10)
 
+    def send_hello_loop(self):
+        """send hello until peer database is updated"""
+        while not self.peer_database:
+            self.send_hello(send_me_hello=True)
+            time.sleep(10)
+
     def start(self):
         """start BronzeChain"""
-        self.send_hello(send_me_hello=True)
+        send_hello_thread = threading.Thread(target=self.send_hello_loop)
+        send_hello_thread.start()
 
+        # start receive thread
         receive_thread = threading.Thread(target=self.receive_data)
         receive_thread.start()
 
-        cleanup_thread = threading.Thread(target= self.cleanup)
+        # start cleanup thread
+        cleanup_thread = threading.Thread(target=self.cleanup)
         cleanup_thread.daemon = True
         cleanup_thread.start()
 
-        if self.miner:
-            miner_thread = threading.Thread(target=self.miner_thread)
-            miner_thread.start()
+        # start mining thread
+        miner_thread = threading.Thread(target=self.miner_thread)
+        miner_thread.daemon = True
+        miner_thread.start()
 
 
