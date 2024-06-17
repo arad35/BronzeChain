@@ -14,7 +14,7 @@ import json
 from typing import List
 import traceback
 import time
-from BronzeChain_classes import *
+from blockchain_classes import *
 
 
 class PacketHandlingError(Exception):
