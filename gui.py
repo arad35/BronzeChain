@@ -1,31 +1,85 @@
-import datetime
+import threading
+
 import customtkinter as ctk
+from blockchain import *
+import re
+import math
+
+TIMEOUT = 15
+HOP_MAX = 4
+MIN_VALUE = 0.5
+peer = None
+
+
+class SendTransactionError(Exception):
+    pass
+
+
+def start_bronzechain(name, peers,connect_port, balance=50, miner=False):
+    """start the BronzeChain application
+    return: the peer created"""
+    my_peer = Peer(name, peers, connect_port, balance=balance, miner=miner)
+    my_peer.start()
+    return my_peer
+
+
+def replace_keys_with_names(data, peer: Peer):
+    """use regex logic to replace public keys of peers with name"""
+    pattern = re.compile(r'(sender|receiver|miner): (\w+)', re.IGNORECASE)
+
+    def replace(match):
+        if match.group(2) == peer.identity:
+            # public key of the user, replace with username
+            return f"{match.group(1)} : {peer.name}"
+
+        name = peer.fetch_name(match.group(2))
+        if name: return f"{match.group(1)} : {name}" # found a name corresponding to key
+
+        # return original string
+        return match.group()
+
+    return pattern.sub(replace, data)
+
+
+def split_lines_long_string(string, line_length):
+    """"split a long string into a multiline string"""
+    lines = []
+
+    lines_count = math.ceil(len(string) / line_length)
+    index = 0
+    for i in range(0, lines_count):
+        if len(string[index:]) <= line_length:
+           lines.append(string[index:])
+
+        else:
+            lines.append(string[index:index+line_length])
+            index += line_length
+
+    return '\n'.join(lines)
 
 
 class ErrorTopLevel(ctk.CTkToplevel):
     def __init__(self, error: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        label = ctk.CTkLabel(self, text="Sneaky error...", font=("Arial", 25))
+        label = ctk.CTkLabel(self, text="Error", font=("Arial", 25))
         label.pack(padx=20, pady=(15, 0))
         error = ctk.CTkLabel(master=self, text=error, font=("Arial", 20))
         error.pack(padx=20, pady=15)
 
 
-class BronzeChainRegistrationWindow(ctk.CTk):
-    def __init__(self, on_join_callback):
+class RegistrationWindow(ctk.CTk):
+    def __init__(self, peers, connect_port):
         super().__init__()
         self.title("BronzeChain")
+        self.peers = peers
+        self.connect_port = connect_port
 
         self.error_window = None
         self.columnconfigure(0, weight=1)
         self.columnconfigure(1, weight=1)
 
-        title = ctk.CTkLabel(master=self,
-                             text="BronzeChain",
-                             font=("Arial", 25))
-        sub_title = ctk.CTkLabel(master=self,
-                                 text="Your decentralized digital wallet",
-                                 font=("Arial", 15))
+        title = ctk.CTkLabel(master=self, text="BronzeChain", font=("Arial", 25))
+        sub_title = ctk.CTkLabel(master=self, text="Your decentralized digital wallet", font=("Arial", 15))
 
         title.grid(row=0, column=0, padx=20, pady=(20, 0), columnspan=2)
         sub_title.grid(row=1, column=0, padx=20, pady=(0, 10), columnspan=2)
@@ -36,177 +90,349 @@ class BronzeChainRegistrationWindow(ctk.CTk):
         self.name.grid(row=2, column=0, padx=20, pady=(0, 20))
         self.join_button.grid(row=2, column=1, padx=(0, 20), pady=(0, 20))
 
-        self.on_join_callback = on_join_callback
-
     def join_event(self):
-        """Activated when the join_button is clicked."""
-        client_name = self.name.get()
-        if not client_name:
+        global peer
+        username = self.name.get()
+        if not username:
             self.display_error()
             return
-        self.on_join_callback(self, client_name)
+
+        uploading_label = ctk.CTkLabel(master=self, text="uploading application...", font=("Arial", 12))
+        uploading_label.grid(row=3, column=0, padx=20, pady=(0, 10), columnspan=2)
+        self.update()
+
+        peer = start_bronzechain(username, self.peers, self.connect_port)
+        self.destroy()
 
     def display_error(self):
-        """Displays an error message regarding a name error."""
-        error = "Please provide a valid name for the system."
+        error_message = "Please provide a valid name for the system."
         if self.error_window is None or not self.error_window.winfo_exists():
-            self.error_window = ErrorTopLevel(master=self, error=error)
+            self.error_window = ErrorTopLevel(master=self, error=error_message)
         else:
             self.error_window.focus()
 
 
 class SideBar(ctk.CTkFrame):
-    def __init__(self, client_name: str, balance: int, master, miner_callback, **kwargs):
+    def __init__(self, master, peer_obj: Peer, **kwargs):
         super().__init__(master, **kwargs)
+        self.peer = peer_obj
 
-        self.name = ctk.CTkLabel(master=self, text=f"Name: {client_name}")
-        self.balance = ctk.CTkLabel(master=self, text=f"Balance: {balance}")
+        self.name = ctk.CTkLabel(master=self, text=f"Name: {peer_obj.name}")
+        self.balance = ctk.CTkLabel(master=self, text=f"Balance: {peer_obj.balance}")
 
-        miner_var = ctk.StringVar(value="on")
-        self.miner_switch = ctk.CTkSwitch(master=self, text="Miner", command=miner_callback,
+        miner_var = ctk.StringVar(value="off")
+        self.miner_switch = ctk.CTkSwitch(master=self, text="Miner", command=self.miner_toggle,
                                           variable=miner_var, onvalue="on", offvalue="off")
 
-        self.name.grid(row=0)
-        self.balance.grid(row=1)
-        self.miner_switch.grid(row=2)
+        self.name.grid(row=0, padx=10)
+        self.balance.grid(row=1, padx=10)
+        self.miner_switch.grid(row=2, padx=10)
+
+    def miner_toggle(self):
+        """turn miner mode on or off"""
+        str_to_bool = {"on": True, "off": False}
+
+        miner_mode_str = self.miner_switch.get()
+        miner_mode = str_to_bool[miner_mode_str]
+        self.peer.miner = miner_mode
+
+    def update_balance(self, new_balance):
+        """update the balance"""
+        self.balance.configure(text=f"Balance: {new_balance}")
 
 
-class Block(ctk.CTkFrame):
-    def __init__(self,
-                 title: str,
-                 difficulty: int,
-                 miner: str,
-                 nonce: int,
-                 previous_hash: str,
-                 reward: int,
-                 timestamp: datetime.datetime,
-                 transaction_hash: str,
-                 tx_count: int,
-                 master,
-                 **kwargs
-                 ):
+class SendTransactionFrame(ctk.CTkFrame):
+    """Frame for sending transactions"""
+    def __init__(self, master, peer_obj: Peer, **kwargs):
+        super().__init__(master, **kwargs)
+        self.peer = peer_obj
+        self.time_pressed: time = None
+
+        title = ctk.CTkLabel(master=self, text="Transfer BronzeCoin", font=("Arial", 36))
+        title.grid(row=0, column=0, columnspan=2, pady=20, padx=20)
+
+        self.receiver_entry = ctk.CTkEntry(master=self, placeholder_text="To: ", font=("Arial", 20))
+        self.receiver_entry.grid(row=1, column=0, pady=(0, 20), sticky="w", padx=20)
+
+        self.value_entry = ctk.CTkEntry(master=self, placeholder_text="Value: ", font=("Arial", 20))
+        self.value_entry.grid(row=2, column=0, pady=(0, 20), sticky="w", padx=20)
+
+        self.send_button = ctk.CTkButton(master=self, text="Send", font=("Arial", 20), command=self.send_transaction)
+        self.send_button.grid(row=3, column=1, pady=(0, 20), sticky="e", padx=20)
+
+        self.message_label = ctk.CTkLabel(master=self, text="", font=("Arial", 20))
+        self.message_label.grid(row=4, column=0, sticky="w", columnspan=2, padx=20)
+
+    def send_transaction(self):
+        """create, verify and send a new transaction"""
+        self.time_pressed = time.time()
+        if self.message_label.cget("text") == "processing transaction...":
+            return
+
+        try:
+            receiver_name = self.receiver_entry.get()
+            if not receiver_name:
+                raise SendTransactionError("You didn't enter receiver's name")
+
+            receiver = self.peer.fetch_public_key(receiver_name)
+            if not receiver:
+                raise SendTransactionError(f"{receiver_name} not found in the peer database")
+
+            value = self.value_entry.get()
+            if not value:
+                raise SendTransactionError(f"you didn't enter a value to transfer")
+
+            try:
+                value = float(value)
+            except ValueError:
+                raise SendTransactionError(f"{value} isn't a numeric value")
+
+            if value > self.peer.balance:
+                raise SendTransactionError(f"{value} is more then your balance {self.peer.balance}")
+
+            if value < MIN_VALUE:
+                raise SendTransactionError(f"{value} is less then the minimum transfer amount: {MIN_VALUE}")
+
+            self.delete_entries()
+            self.display_message("processing transaction...")
+
+            # Create the transaction
+            transaction = self.peer.create_transaction(receiver, value)
+
+            # Verify the transaction
+            verification = self.peer.verify_transaction(transaction)
+            if verification is True:  # check if the verification is the boolean True (and not some string)
+                self.display_message("Transaction verified successfully.")
+                self.update()
+
+                self.peer.send_transaction(transaction)
+                self.peer.add_transaction(transaction)
+
+                self.display_message("Transaction sent and added to verified transactions.")
+                self.update()
+            else:
+                raise SendTransactionError(f"Transaction verification failed: {verification}")
+
+        except SendTransactionError as e:
+            self.delete_entries()
+            self.display_message(e.args[0])
+            self.update()
+
+        finally:
+            self.delete_message()
+
+    def delete_entries(self):
+        """delete receiver and value entries"""
+        self.receiver_entry.delete(0, 'end')
+        self.value_entry.delete(0, 'end')
+
+    def display_message(self, message):
+        """display a system message"""
+        self.message_label.configure(text=message)
+
+    def delete_message(self):
+        time.sleep(3)
+        if time.time() - self.time_pressed > 3:
+            self.message_label.configure(text="")
+
+
+class TransactionFrame(ctk.CTkFrame):
+    """Frame of a single transaction"""
+    def __init__(self, master, peer_obj, transaction: Transaction, transaction_number, **kwargs):
+        super().__init__(master, **kwargs)
+        self.configure(fg_color="#0000FF")
+
+        title = ctk.CTkLabel(master=self, text=f"Transaction #{transaction_number}", font=("Arial", 28))
+        title.pack()
+        transaction_data = json.loads(transaction.to_json())
+
+        sender_label = ctk.CTkLabel(master=self,
+                                    text=replace_keys_with_names(f"Sender: {transaction_data['sender']}", peer_obj),
+                                    font=("Arial", 20))
+        sender_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        receiver_label = ctk.CTkLabel(master=self,
+                                      text=replace_keys_with_names(f"Receiver: {transaction_data['receiver']}", peer_obj),
+                                      font=("Arial", 20))
+        receiver_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        value_label = ctk.CTkLabel(master=self, text=f"Value: {transaction_data['value']}", font=("Arial", 20))
+        value_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        timestamp_label = ctk.CTkLabel(master=self, text=f"Timestamp: {transaction_data['timestamp']}", font=("Arial", 20))
+        timestamp_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        tx_hash_label = ctk.CTkLabel(master=self, text=f"Tx_hash: {transaction_data['tx_hash']}",
+                                     font=("Arial", 20))
+        tx_hash_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        signature_label = ctk.CTkLabel(master=self,
+                                       text=split_lines_long_string(f"Signature: {transaction_data['signature']}", 100),
+                                       font=("Arial", 20), justify="left")
+        signature_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+
+class BlockTransactionsFrame(ctk.CTkScrollableFrame):
+    """Frame of block transactions"""
+    def __init__(self, master, peer_obj: Peer, block: Block, block_numer, **kwargs):
         super().__init__(master, **kwargs)
 
-        self.configure(fg_color="#808080")
-
-        title = ctk.CTkLabel(master=self, text=title, font=("Arial", 15))
-        transaction_hash_label = ctk.CTkLabel(master=self, text=f"Transaction Hash: {transaction_hash}")
-        previous_hash_label = ctk.CTkLabel(master=self, text=f"Previous Hash: {previous_hash}")
-        diff_label = ctk.CTkLabel(master=self, text=f"Difficulty: {difficulty}")
-        reward_label = ctk.CTkLabel(master=self, text=f"Reward: {reward}")
-        nonce_label = ctk.CTkLabel(master=self, text=f"Nonce: {nonce}")
-        miner_label = ctk.CTkLabel(master=self, text=f"Miner: {miner}")
-        tx_count_label = ctk.CTkLabel(master=self, text=f"Transaction Count: {tx_count}")
-        timestamp_label = ctk.CTkLabel(master=self, text=f"Timestamp: {timestamp}")
-
-        title.pack(anchor='w')
-        transaction_hash_label.pack(anchor='w')
-        previous_hash_label.pack(anchor='w')
-        diff_label.pack(anchor='w')
-        reward_label.pack(anchor='w')
-        nonce_label.pack(anchor='w')
-        miner_label.pack(anchor='w')
-        tx_count_label.pack(anchor='w')
-        timestamp_label.pack(anchor='w')
+        i = 0
+        for transaction in block.transactions:
+            transaction_frame = TransactionFrame(self, peer_obj, transaction, i)
+            transaction_frame.pack(pady=20)
+            i += 1
 
 
-class BlockChainFrame(ctk.CTkScrollableFrame):
-    def __init__(self, master, **kwargs):
+class BlockTransactionsWindow(ctk.CTkToplevel):
+    """Window of block transactions"""
+    def __init__(self, master, peer_obj: Peer, block: Block, block_numer, **kwargs):
         super().__init__(master, **kwargs)
+        # Get the screen width and height
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
 
-        self.__blocks = []
+        # Set the geometry to full screen
+        self.geometry(f"{screen_width}x{screen_height}")
 
-    def set_blocks(self, blocks):
-        for block in self.__blocks:
-            block.pack_forget()
-        self.__blocks = blocks
-        for i, block in enumerate(self.__blocks):
-            block.pack(padx=10, pady=10, fill="x")
+        # Allow resizing
+        self.resizable(True, True)
+
+        title = ctk.CTkLabel(master=self, text=f"Block #{block_numer}: Transactions", font=("Arial", 36))
+        title.pack(pady=20)
+
+        transactions_frame = BlockTransactionsFrame(self, peer_obj, block, block_numer)
+        transactions_frame.pack(side='top', anchor='w', padx=10, expand=True, fill=ctk.BOTH)
 
 
-class TransactionCreationFrame(ctk.CTkFrame):
-    def __init__(self, master, **kwargs):
+class BlockFrame(ctk.CTkFrame):
+    """Frame of a single block"""
+    def __init__(self, master, peer_obj, block: Block, block_number, **kwargs):
         super().__init__(master, **kwargs)
+        self.configure(fg_color="#0000FF")
+        self.peer = peer_obj
+        self.block = block
+        self.block_number = block_number
 
-        label = ctk.CTkLabel(master=self, text="Transfer money with BronzeChain")
-        label.grid(row=0, column=0, columnspan=3)
+        title = ctk.CTkLabel(master=self, text=f"Block#{block_number}", font=("Arial", 28))
+        title.pack()
+        block_data = json.loads(block.to_json())
 
-        self.to = ctk.CTkEntry(master=self, placeholder_text="To: ")
-        self.value = ctk.CTkEntry(master=self, placeholder_text="Value: ")
-        self.send_button = ctk.CTkButton(master=self, text="Send", command=self.send_event)
+        tx_count_label = ctk.CTkLabel(master=self, text=f"Tx_count: {block_data['tx_count']}", font=("Arial", 20))
+        tx_count_label.pack(side='top', anchor='w', padx=10, pady=2)
 
-        self.to.grid(row=1, column=0, padx=20, pady=(0, 20))
-        self.value.grid(row=1, column=1, padx=20, pady=(0, 20))
-        self.send_button.grid(row=1, column=2, padx=(0, 20), pady=(0, 20))
+        tx_hash_root_label = ctk.CTkLabel(master=self, text=f"Tx_hash_root: {block_data['tx_hash_root']}",
+                                          font=("Arial", 20))
+        tx_hash_root_label.pack(side='top', anchor='w', padx=10, pady=2)
 
-    def send_event(self):
-        """Called when the send button is clicked."""
-        print("An event was sent!")
-        self.to.delete(0, 'end')
-        self.value.delete(0, 'end')
+        difficulty_label = ctk.CTkLabel(master=self, text=f"Difficulty: {block_data['difficulty']}", font=("Arial", 20))
+        difficulty_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        reward_label = ctk.CTkLabel(master=self, text=f"Reward: {block_data['reward']}", font=("Arial", 20))
+        reward_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        previous_hash_label = ctk.CTkLabel(master=self, text=f"Previous_hash: {block_data['previous_hash']}",
+                                           font=("Arial", 20))
+        if previous_hash_label.cget("text") == "":
+            previous_hash_label.configure(text='""')
+
+        previous_hash_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        nonce_label = ctk.CTkLabel(master=self, text=f"Nonce: {block_data['nonce']}", font=("Arial", 20))
+        nonce_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        miner_label = ctk.CTkLabel(master=self, text=replace_keys_with_names(f"Miner: {block_data['miner']}", peer_obj),
+                                   font=("Arial", 20))
+        miner_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        timestamp_label = ctk.CTkLabel(master=self, text=f"Timestamp: {block_data['timestamp']}", font=("Arial", 20))
+        timestamp_label.pack(side='top', anchor='w', padx=10, pady=2)
+
+        self.transactions_button = ctk.CTkButton(master=self, text="show transactions", font=("Arial", 20),
+                                                 bg_color="#000000", command=self.show_transactions)
+        self.transactions_button.pack(side="top", anchor="e", padx=10, pady=2)
+
+        self.transaction_window = None
+
+    def show_transactions(self):
+        """show transactions list of a block"""
+        # if transaction window not created yet, create it
+        if self.transaction_window is None or not self.transaction_window.winfo_exists():
+            self.transaction_window = BlockTransactionsWindow(self, self.peer, self.block, self.block_number)
+            self.transaction_window.lift()
+            self.transaction_window.attributes('-topmost', True)
+            self.transaction_window.attributes('-topmost', False)
+        else:
+            self.transaction_window.lift()
+            self.transaction_window.attributes('-topmost', True)
+            self.transaction_window.attributes('-topmost', False)
+
+
+class LiveBlockchainFrame(ctk.CTkScrollableFrame):
+    """view the live blockchain"""
+
+    def __init__(self, master, peer_obj: Peer, **kwargs):
+        super().__init__(master, **kwargs)
+        self.peer = peer_obj
+
+        title = ctk.CTkLabel(master=self, text=f"Live blockchain view", font=("Arial", 36))
+        title.pack()
+
+        self.block_frames = []
+
+    def add_last_block(self):
+        """add a block to the blockchain frame"""
+        block_frame = BlockFrame(self, self.peer, self.peer.blockchain.get_last_block(), self.peer.blockchain.height)
+        self.block_frames.append(block_frame)
+        block_frame.pack(pady=20)
 
 
 class Application(ctk.CTk):
-    def __init__(self, client_name: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
+    def __init__(self, peer_obj: Peer,*args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.peer = peer_obj
+        # current amount of blocks
+        self.height = self.peer.blockchain.height
         self.title("BronzeChain")
 
-        self.columnconfigure(0, weight=0)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-        self.rowconfigure(2, weight=1)
+        self.peer = peer
+        self.sidebar = SideBar(self, peer_obj)
+        self.sidebar.pack(side="left", fill="y", padx=10)
 
-        self.balance = 0
-        self.sidebar = SideBar(client_name, 0, self, self.miner_toggle)
-        self.sidebar.grid(row=0, column=0, sticky="ns", rowspan=3)
+        self.send_frame = SendTransactionFrame(self, peer_obj)
+        self.send_frame.pack(side="left", fill="y", padx=10, pady=10)
 
-        self.tx_creation = TransactionCreationFrame(master=self)
-        self.tx_creation.grid(row=0, column=1, sticky="news")
+        self.blockchain_frame = LiveBlockchainFrame(self, peer_obj)
+        self.blockchain_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
 
-        self.blockchain = BlockChainFrame(master=self)
-        ctk.CTkLabel(master=self, text="Live Blockchain").grid(row=1, column=1, columnspan=2, sticky="news")
-        self.blockchain.grid(row=2, column=1, columnspan=2, sticky="news")
+        # self.show_block()
+        update_thread = threading.Thread(target=self.update_app)
+        update_thread.daemon = True
+        update_thread.start()
 
-        self.blocks = [
-            Block(
-                master=self.blockchain,
-                title="Block #100",
-                difficulty=3,
-                miner="MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCmZcXCBDxr4z...arORIlrbGpVUmoxn0eoW3hlpGKGzkc/8bQSwd0fAQIDAQAB",
-                nonce=3734,
-                previous_hash="ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-                reward=1,
-                timestamp=datetime.datetime.now(),
-                transaction_hash="29c9b78e64b346a0977b004559617c4a389184f623159b28772d97dd47ba6fd5",
-                tx_count=3,
-            ),
-            Block(
-                master=self.blockchain,
-                title="Block #99",
-                difficulty=3,
-                miner="MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQCX6JuQ/m0GPO...hL6mWZR1SPrFjgVXZzUdvD+0XB/WEQfe05ugOx2uwIDAQAB",
-                nonce=8908,
-                previous_hash="127e6fbfe24a750e72930c220a8e138275656b8e5d8f48a98c3c92df2caba935",
-                reward=1,
-                timestamp=datetime.datetime.now(),
-                transaction_hash="c73d08de890479518ed60cf670d17faa26a4a71f995c1dcc978165399401a6c4",
-                tx_count=3,
-                )
-        ]
-        self.blockchain.set_blocks(self.blocks)
-
-    def miner_toggle(self):
-        print(f"{self.__class__} -> Miner Toggled.")
+    def update_app(self):
+        while True:
+            if self.peer.blockchain.height > self.height:
+                print(f"new block found")
+                self.blockchain_frame.add_last_block()
+                # self.process_last_block()
+                self.sidebar.update_balance(self.peer.balance)
+                self.height += 1
+            time.sleep(3)
 
 
-def start_main_application(register_window, client_name: str):
-    register_window.destroy()
-    app = Application(client_name)
+def run(peers, connect_port):
+    """run the BronzeChain application"""
+    global peer
+    ctk.set_default_color_theme('blue')
+    ctk.set_appearance_mode('dark')
+
+    registration_window = RegistrationWindow(peers, connect_port)
+    registration_window.mainloop()
+
+    app = Application(peer_obj=peer)
     app.mainloop()
 
 
-if __name__ == "__main__":
-    registration_window = BronzeChainRegistrationWindow(start_main_application)
-    registration_window.mainloop()
+
