@@ -14,6 +14,7 @@ import json
 from typing import List
 import traceback
 import time
+import sqlite3 as lite
 from blockchain_classes import *
 
 
@@ -51,12 +52,13 @@ class Peer:
         # blockchain properties
         self.blockchain = Blockchain(min_transactions, max_transactions, difficulty, reward)
         self.miner = miner  # flag indicating whether peer is a miner
-        self.peer_database = dict()  # address, name, public key
+        self.peer_database: lite.Connection = None
+        self.database_path = f"blockchain_{name}.db"
 
     @property
     def identity(self):
         """hexadecimal representation of public key"""
-        return binascii.hexlify(self.public_key.export_key()).decode("utf-8")
+        return binascii.hexlify(self.public_key.export_key()).decode()
 
     @property
     def signer(self):
@@ -73,28 +75,86 @@ class Peer:
         """set verified transactions list"""
         self.blockchain.verified_transactions = value
 
-    def update_peer(self, address, name, public_key):
+    def create_peer_database(self):
+        """"Create peer database"""
+        try:
+            conn = lite.connect(self.database_path, check_same_thread=False)
+        except lite.Error as e:
+            print(f"error creating peer datbase: {e}")
+            return
+
+        self.peer_database = conn
+        cursor = conn.cursor()
+        # address, name and public key are unique
+        cursor.execute("DROP TABLE IF EXISTS Peers")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS Peers
+                       (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       address TEXT Unique,
+                       name TEXT Unique,
+                       public_key TEXT Unique,
+                       is_user BOOLEAN)""")
+
+        conn.commit()
+        print(f"create peer database at path {self.database_path}, table Peers")
+
+    def update_peer(self, address, name, public_key: RSA.RsaKey, is_user=False):
         """update peer info in database"""
-        self.peer_database[address] = [name, binascii.hexlify(public_key.export_key()).decode()]
-        print(f"\nupdated peer {address} in database", self.peer_database[address])
+        cursor = self.peer_database.cursor()
+
+        # convert address and public key to string
+        public_key = binascii.hexlify(public_key.export_key()).decode()
+        address = str(address)
+
+        try:
+            # check if peer already exists
+            cursor.execute("SELECT id from Peers WHERE address=? OR name=? OR public_key=?",
+                           (address, name, public_key))
+            row = cursor.fetchone()
+
+            # if exists, update row
+            if row:
+                cursor.execute("UPDATE Peers SET address = ?, name = ?, public_key = ?, WHERE id = ?",
+                               (address, name, public_key, row[0]))
+
+            # else insert a new row
+            else:
+                cursor.execute("INSERT INTO Peers(address, name, public_key, is_user) VALUES(?,?,?,?)",
+                               (address, name, public_key, is_user))
+
+            self.peer_database.commit()
+            print("\nupdated peer in database")
+            print(f"address: {address}\n name: {name}\n public_key: {public_key}")
+
+        except lite.InterfaceError as e:
+            print(f"sql error: {e}\naddress: {address}\nname: {name}\npublic_key: {public_key}")
 
     def fetch_public_key(self, peer_name):
         """fetch public key of peer by name
         returns public key if found, false if not found"""
-        for name, public_key in self.peer_database.values():
-            if peer_name == name:
-                return RSA.import_key(binascii.unhexlify(public_key))
+        cursor = self.peer_database.cursor()
 
-        # name not found in database
+        cursor.execute("SELECT public_key from Peers WHERE name=?", (peer_name, ))
+        row = cursor.fetchone()
+
+        # return public key if found
+        # convert public key to RSA key
+        if row: return RSA.import_key(binascii.unhexlify(row[0]))
+
+        # return false if not found
         return False
 
     def fetch_name(self, public_key_str):
         """fetch name by string rep of public key
         returns name if found, false if not found"""
-        for name, key in self.peer_database.values():
-            if key == public_key_str:
-                return name
+        cursor = self.peer_database.cursor()
 
+        cursor.execute("SELECT name from Peers WHERE public_key=?", (public_key_str,))
+        row = cursor.fetchone()
+
+        # return name if found
+        if row: return row[0]
+
+        # return false if not found
         return False
 
     def compute_packet_hash(self, data):
@@ -533,15 +593,13 @@ class Peer:
 
             time.sleep(10)
 
-    def send_hello_loop(self):
-        """send hello until peer database is updated"""
-        while not self.peer_database:
-            self.send_hello(send_me_hello=True)
-            time.sleep(10)
-
     def start(self):
         """start BronzeChain"""
-        send_hello_thread = threading.Thread(target=self.send_hello_loop)
+        self.create_peer_database()
+        self.update_peer((self.ip, self.connect_port), self.name, self.public_key, is_user=True)
+
+        print("I'm here")
+        send_hello_thread = threading.Thread(target=self.send_hello, args=(True, ))
         send_hello_thread.start()
 
         # start receive thread
