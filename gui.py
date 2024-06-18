@@ -8,19 +8,26 @@ import math
 TIMEOUT = 15
 HOP_MAX = 4
 MIN_VALUE = 0.5
-peer = None
+PEER = None
 
 
 class SendTransactionError(Exception):
     pass
 
 
-def start_bronzechain(name, peers,connect_port, balance=50, miner=False):
+def start_blockchain(name, server_address, balance=50, miner=False):
     """start the BronzeChain application
-    return: the peer created"""
-    my_peer = Peer(name, peers, connect_port, balance=balance, miner=miner)
-    my_peer.start()
-    return my_peer
+    returns: the peer if peer added successfully, error message otherwise"""
+    peer_obj = Peer(name, server_address, balance=balance, miner=miner)
+    result = peer_obj.start()
+    pass
+    if isinstance(result, str):
+        # couldn't start blockchain
+        return result
+
+    elif result is True:
+        # send server_hello response
+        return peer_obj
 
 
 def replace_keys_with_names(data, peer: Peer):
@@ -32,6 +39,7 @@ def replace_keys_with_names(data, peer: Peer):
             # public key of the user, replace with username
             return f"{match.group(1)} : {peer.name}"
 
+        # search for public key in database
         name = peer.fetch_name(match.group(2))
         if name: return f"{match.group(1)} : {name}" # found a name corresponding to key
 
@@ -61,18 +69,17 @@ def split_lines_long_string(string, line_length):
 class ErrorTopLevel(ctk.CTkToplevel):
     def __init__(self, error: str, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        label = ctk.CTkLabel(self, text="Error", font=("Arial", 25))
-        label.pack(padx=20, pady=(15, 0))
-        error = ctk.CTkLabel(master=self, text=error, font=("Arial", 20))
-        error.pack(padx=20, pady=15)
+        title = ctk.CTkLabel(self, text="Error", font=("Arial", 25))
+        title.pack(padx=20, pady=(15, 0))
+        message_label = ctk.CTkLabel(master=self, text=error, font=("Arial", 20))
+        message_label.pack(padx=20, pady=15)
 
 
 class RegistrationWindow(ctk.CTk):
-    def __init__(self, peers, connect_port):
+    def __init__(self, server_address):
         super().__init__()
         self.title("BronzeChain")
-        self.peers = peers
-        self.connect_port = connect_port
+        self.server_address = server_address
 
         self.error_window = None
         self.columnconfigure(0, weight=1)
@@ -91,23 +98,29 @@ class RegistrationWindow(ctk.CTk):
         self.join_button.grid(row=2, column=1, padx=(0, 20), pady=(0, 20))
 
     def join_event(self):
-        global peer
+        global PEER
         username = self.name.get()
         if not username:
-            self.display_error()
+            self.display_error("You didn't enter a name")
             return
 
         uploading_label = ctk.CTkLabel(master=self, text="uploading application...", font=("Arial", 12))
         uploading_label.grid(row=3, column=0, padx=20, pady=(0, 10), columnspan=2)
         self.update()
 
-        peer = start_bronzechain(username, self.peers, self.connect_port)
-        self.destroy()
+        peer_obj = start_blockchain(username, self.server_address)
 
-    def display_error(self):
-        error_message = "Please provide a valid name for the system."
+        if isinstance(peer_obj, str):
+            # couldn't start blockchain
+            self.display_error(peer_obj)
+
+        elif isinstance(peer_obj, Peer):
+            PEER = peer_obj
+            self.destroy()
+
+    def display_error(self, message):
         if self.error_window is None or not self.error_window.winfo_exists():
-            self.error_window = ErrorTopLevel(master=self, error=error_message)
+            self.error_window = ErrorTopLevel(master=self, error=message)
         else:
             self.error_window.focus()
 
@@ -173,6 +186,9 @@ class SendTransactionFrame(ctk.CTkFrame):
             receiver_name = self.receiver_entry.get()
             if not receiver_name:
                 raise SendTransactionError("You didn't enter receiver's name")
+
+            if receiver_name == self.peer.name:
+                raise SendTransactionError(f"You can't send a transaction to yourself, {self.peer.name}")
 
             receiver = self.peer.fetch_public_key(receiver_name)
             if not receiver:
@@ -396,7 +412,7 @@ class Application(ctk.CTk):
         self.height = self.peer.blockchain.height
         self.title("BronzeChain")
 
-        self.peer = peer
+        self.peer = PEER
         self.sidebar = SideBar(self, peer_obj)
         self.sidebar.pack(side="left", fill="y", padx=10)
 
@@ -422,16 +438,16 @@ class Application(ctk.CTk):
             time.sleep(3)
 
 
-def run(peers, connect_port):
+def run(server_address):
     """run the BronzeChain application"""
-    global peer
+    global PEER
     ctk.set_default_color_theme('blue')
     ctk.set_appearance_mode('dark')
 
-    registration_window = RegistrationWindow(peers, connect_port)
+    registration_window = RegistrationWindow(server_address)
     registration_window.mainloop()
 
-    app = Application(peer_obj=peer)
+    app = Application(peer_obj=PEER)
     app.mainloop()
 
 
