@@ -38,7 +38,8 @@ class Peer:
     """Represents a peer in the blockchain network"""
 
     def __init__(self, name, server_address, balance=50, miner=False, hop_max=3, time_to_live=240,
-                 min_transactions=3, max_transactions=5, difficulty=5, reward=5):
+                 min_transactions=3, max_transactions=5, difficulty=4, reward=5, min_transaction_value=0.5):
+
         # initialize networking properties
         ip = gethostbyname(gethostname())
         self.connect_sock = socket(AF_INET, SOCK_STREAM)
@@ -55,6 +56,7 @@ class Peer:
         # net constants
         self.hop_max = hop_max
         self.time_to_live = time_to_live
+        self.min_transaction_value = min_transaction_value
 
         # identifying properties
         self.name = name
@@ -240,18 +242,20 @@ class Peer:
         print("\nnew transaction created:\n", new_transaction)
         return new_transaction
 
-    @staticmethod
-    def verify_transaction(transaction: Transaction):
+    def verify_transaction(self, transaction: Transaction):
         """verifies validity of transaction
         checks hash and signature
         returns true if transaction is valid and suitable error message otherwise"""
         json_data = transaction.to_json()
         data = json.loads(json_data)
 
+        # verify min transaction value
+        if data['value'] < self.min_transaction_value:
+            return "transaction value too low"
+
         # verify hash
         string_data = f"{data['sender']}{data['receiver']}{data['value']}{data['timestamp']}"
         if data["tx_hash"] != sha256(string_data):
-
             return "transaction hash is invalid"
 
         # verify signature
@@ -638,7 +642,7 @@ class Peer:
         except Exception as e:
             return f"data was not a valid block\n{e}"
 
-        verification = blockchain.verify_block(block, Peer.verify_transaction)
+        verification = blockchain.verify_block(block, self.verify_transaction)
         if isinstance(verification, str):
             # invalid block
             return verification
@@ -716,7 +720,7 @@ class Peer:
         block = blockchain.create_new_block()
         blockchain.mine_block(block, self.public_key)
 
-        verification = blockchain.verify_block(block, Peer.verify_transaction)
+        verification = blockchain.verify_block(block, self.verify_transaction)
         if verification is True:
             print("Block verified successfully")
             self.send_block(block)
