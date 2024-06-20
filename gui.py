@@ -275,7 +275,9 @@ class TransactionFrame(ctk.CTkFrame):
         value_label = ctk.CTkLabel(master=self, text=f"Value: {transaction_data['value']}", font=("Arial", 20))
         value_label.pack(side='top', anchor='w', padx=10, pady=2)
 
-        timestamp_label = ctk.CTkLabel(master=self, text=f"Timestamp: {transaction_data['timestamp']}", font=("Arial", 20))
+        timestamp_label = ctk.CTkLabel(master=self,
+                                       text=f"Timestamp: {transaction.timestamp.strftime('%m/%d/%Y, %H:%M:%S')}",
+                                       font=("Arial", 20))
         timestamp_label.pack(side='top', anchor='w', padx=10, pady=2)
 
         tx_hash_label = ctk.CTkLabel(master=self, text=f"Tx_hash: {transaction_data['tx_hash']}",
@@ -334,6 +336,9 @@ class BlockFrame(ctk.CTkFrame):
         title.pack()
         block_data = json.loads(block.to_json())
 
+        block_hash_label = ctk.CTkLabel(master=self, text=f"Block_hash: {block.compute_hash()}", font=("Arial", 20))
+        block_hash_label.pack(side='top', anchor='w', padx=10, pady=2)
+
         tx_count_label = ctk.CTkLabel(master=self, text=f"Tx_count: {block_data['tx_count']}", font=("Arial", 20))
         tx_count_label.pack(side='top', anchor='w', padx=10, pady=2)
 
@@ -361,7 +366,9 @@ class BlockFrame(ctk.CTkFrame):
                                    font=("Arial", 20))
         miner_label.pack(side='top', anchor='w', padx=10, pady=2)
 
-        timestamp_label = ctk.CTkLabel(master=self, text=f"Timestamp: {block_data['timestamp']}", font=("Arial", 20))
+        timestamp_label = ctk.CTkLabel(master=self,
+                                       text=f"Timestamp: {block.timestamp.strftime('%m/%d/%Y, %H:%M:%S')}",
+                                       font=("Arial", 20))
         timestamp_label.pack(side='top', anchor='w', padx=10, pady=2)
 
         self.transactions_button = ctk.CTkButton(master=self, text="show transactions", font=("Arial", 20),
