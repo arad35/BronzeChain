@@ -38,7 +38,7 @@ class Peer:
     """Represents a peer in the blockchain network"""
 
     def __init__(self, name, server_address, balance=50, miner=False, hop_max=3, time_to_live=240,
-                 min_transactions=3, max_transactions=5, difficulty=2, reward=5):
+                 min_transactions=3, max_transactions=5, difficulty=5, reward=5):
         # initialize networking properties
         ip = gethostbyname(gethostname())
         self.connect_sock = socket(AF_INET, SOCK_STREAM)
