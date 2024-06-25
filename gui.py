@@ -391,15 +391,12 @@ class BlockFrame(ctk.CTkFrame):
             self.transaction_window.attributes('-topmost', False)
 
 
-class LiveBlockchainFrame(ctk.CTkScrollableFrame):
-    """view the live blockchain"""
+class ScrollableBlockchainFrame(ctk.CTkScrollableFrame):
+    """scrollable frame of blocks"""
 
     def __init__(self, master, peer_obj: Peer, **kwargs):
         super().__init__(master, **kwargs)
         self.peer = peer_obj
-
-        title = ctk.CTkLabel(master=self, text=f"Live blockchain view", font=("Arial", 36))
-        title.pack()
 
         self.block_frames = []
 
@@ -408,6 +405,24 @@ class LiveBlockchainFrame(ctk.CTkScrollableFrame):
         block_frame = BlockFrame(self, self.peer, self.peer.blockchain.get_last_block(), self.peer.blockchain.height)
         self.block_frames.append(block_frame)
         block_frame.pack(pady=20)
+
+
+class LiveBlockchainFrame(ctk.CTkFrame):
+    """view the live blockchain"""
+
+    def __init__(self, master, peer_obj: Peer, **kwargs):
+        super().__init__(master, **kwargs)
+        self.peer = peer_obj
+
+        title = ctk.CTkLabel(master=self, text=f"Live blockchain view", font=("Arial", 36))
+        title.pack(side="top", pady=10)
+
+        self.scrollable_frame = ScrollableBlockchainFrame(self, peer_obj)
+        self.scrollable_frame.pack(side="top", fill="both", expand=True, pady=10)
+
+    def add_last_block(self):
+        """add a block to the scrollable frame"""
+        self.scrollable_frame.add_last_block()
 
 
 class Application(ctk.CTk):
